@@ -1,0 +1,197 @@
+---
+title: "COVID-19 Spread and Infection Rates"
+author: "Juan Felipe Maldonado"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+## Introduction
+
+The COVID-19 pandemic forced the world's governments to make quick decisions on how they would deal with the spread of the virus. Some decided to continue life as usual, while others tried their best to keep the virus out of their country waiting for the virus to be researched and the vaccine to be developed.
+
+This report aims to answer: **Did delaying the COVID-19 virus from infecting a country help decrease the infection rate among its inhabitants?**
+
+## Loading libraries
+
+```{r loadLibraries}
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(knitr)
+library(ggplot2)
+# Not used in class. Please install using "install.packages("leaflet")"
+library(leaflet)
+```
+
+## Importing data
+
+```{r importData}
+cases <- read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+```
+
+The dataset used was produced by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University. It contains information about COVID-19 cases, deaths and recoveries by day in many locations globally. For this analysis only data related to cases will be used.
+
+## Tiding data
+
+```{r tidyData}
+# Pivot dates from column to row
+cases <- cases %>% select(-Province.State) %>% pivot_longer(cols = -c("Country.Region","Lat","Long"), names_to = "date", values_to = "number") %>% mutate(date = mdy(sub('X', '', date)))
+
+# Assigning a mean coordinate to every country. This step also deals with entries of a country where coordinates are N/A
+cases <- left_join(cases, cases %>% drop_na() %>% group_by(Country.Region) %>% summarize(Mean_Lat = mean(Lat), Mean_Long = mean(Long), .groups = "drop"), by = "Country.Region" ) %>% group_by(Country.Region, Mean_Long, Mean_Lat, date) %>% summarize(number = sum(number))
+
+# Some entries in the dataset are not actually countries. Filtering by a list of valid countries.
+countries <- tibble(Country.Region = c("China", "Japan", "Korea, South", "Taiwan*", "Thailand", "US", "Canada", "Singapore", "Vietnam", "France", "Malaysia", "Nepal", "Australia", "Cambodia", "Germany", "Sri Lanka", "Finland", "United Arab Emirates", "India", "Philippines", "Italy", "Russia", "United Kingdom", "Spain", "Sweden", "Belgium", "Egypt", "Iran", "Israel", "Lebanon", "Chile", "Afghanistan", "Bahrain", "Iraq", "Kuwait", "Oman", "Algeria", "Austria", "Croatia", "Pakistan", "Switzerland", "Brazil", "Georgia", "Greece", "North Macedonia", "Norway", "Romania", "Denmark", "Estonia", "Netherlands", "Belarus", "Iceland", "Mexico", "New Zealand", "Nigeria", "Ireland", "Luxembourg", "Monaco", "Qatar", "San Marino", "Armenia", "Azerbaijan", "Czechia", "Dominican Republic", "Ecuador", "Andorra", "Indonesia", "Latvia", "Morocco", "Portugal", "Saudi Arabia", "Senegal", "Argentina", "Jordan", "Ukraine", "Hungary", "Liechtenstein", "Poland", "Tunisia", "Bosnia and Herzegovina", "Slovenia", "South Africa", "West Bank and Gaza", "Bhutan", "Cameroon", "Colombia", "Costa Rica", "Holy See", "Peru", "Serbia", "Slovakia", "Togo", "Malta", "Bangladesh", "Bulgaria", "Maldives", "Moldova", "Paraguay", "Albania", "Brunei", "Burkina Faso", "Cyprus", "Mongolia", "Panama", "Bolivia", "Congo (Kinshasa)", "Cote d'Ivoire", "Honduras", "Jamaica", "Turkey", "Cuba", "Guyana", "Antigua and Barbuda", "Ethiopia", "Guinea", "Kazakhstan", "Kenya", "Uruguay", "Eswatini", "Gabon", "Ghana", "Guatemala", "Kosovo", "Mauritania", "Namibia", "Rwanda", "Saint Lucia", "Saint Vincent and the Grenadines", "Sudan", "Suriname", "Trinidad and Tobago", "Venezuela", "Central African Republic", "Congo (Brazzaville)", "Equatorial Guinea", "Seychelles", "Uzbekistan", "Bahamas", "Benin", "Somalia", "Tanzania", "Barbados", "Gambia", "Liberia", "Montenegro", "Djibouti", "Kyrgyzstan", "Mauritius", "Zambia", "Chad", "El Salvador", "Fiji", "Lithuania", "Nicaragua", "Angola", "Cabo Verde", "Haiti", "Madagascar", "Niger", "Papua New Guinea", "Zimbabwe", "Eritrea", "Uganda", "Dominica", "Grenada", "Mozambique", "Syria", "Timor-Leste", "Belize", "Laos", "Libya", "Guinea-Bissau", "Mali", "Saint Kitts and Nevis", "Burma", "Botswana", "Burundi", "Sierra Leone", "Malawi", "South Sudan", "Sao Tome and Principe", "Yemen", "Comoros", "Tajikistan", "Lesotho", "Solomon Islands", "Marshall Islands", "Vanuatu", "Samoa", "Micronesia", "Kiribati", "Palau", "Tonga", "Antarctica", "Nauru", "Korea, North", "Tuvalu"))
+
+cases <- left_join(countries, cases, by = "Country.Region") %>% select(c("Country.Region", "Mean_Lat", "Mean_Long", "date", "number"))
+
+summary(cases)
+```
+The data is clean and ready to begin analyzing the spread of COVID-19 and its relationship with the infection rate in a country.
+
+## Spread of the virus over time
+
+```{r countrySpread}
+date_first_country <- cases %>% filter(number > 0) %>% group_by(Country.Region, Mean_Lat, Mean_Long) %>% summarize(date_first = min(date), .groups = "drop")
+
+date_first_global <- min(date_first_country$date_first)
+
+date_first_country <- date_first_country %>% mutate(days_since_first_global = interval(date_first_global,date_first) %/% days(1) + 1) %>% arrange(days_since_first_global) %>% mutate(weeks_since_first_global = floor(days_since_first_global/7))
+
+summary(date_first_country)
+```
+The tibble "date_first_country" contains one entry per country, with the date of the first case in each country and the number of days and weeks it took the virus to arrive since the first recorded global case.
+
+### Map of the spread of the virus over time
+
+```{r conuntrySpreadMap}
+pal <- colorNumeric(palette = "magma", domain = c(0,10), reverse = TRUE)
+
+leaflet() %>% addTiles() %>% setView(lat = 0, lng = 0, zoom = 1) %>% addCircleMarkers(lat = date_first_country$Mean_Lat, lng = date_first_country$Mean_Long, color = pal(date_first_country$weeks_since_first_global), radius = 5) %>% addLegend(position = "bottomright", pal = pal, values = c(0:11), title = "Weeks")
+```
+
+In the map, dots are colored according to the number of weeks it took for a case to be detected after the first global case. It can be seen that the spread of COVID-19 began in Asia, from where it rapidly spread to the USA, Canada, Australia and Germany. In the following 8 weeks it slowly spread to every other country except isolated nations like islands and North Korea. The dots in light gray show places where COVID took more than 10 weeks to arrive.
+
+The map shows that the efforts of some nations to delay the arrival of COVID-19 did buy some time before the first case was detected. Did this have an effect on the rate of transmission?
+
+## Modeling virus transmission in the countries
+
+Although it makes some simplifying assumptions about the spread of a virus, logistic growth can be a good model of the spread of a virus in a population.
+
+References:
+
+* <https://www.wolframcloud.com/obj/covid-19/Published/Logistic-Growth-Model-for-COVID-19.nb>
+* <https://www.iosrjournals.org/iosr-jm/papers/Vol20-issue4/Ser-2/B2004020613.pdf>
+
+
+Logistic growth is modeled by the equation: $Cases = \frac{Asymptote}{1+e^{\frac{InflectionDay - CurrentDay}{Normalized Infection Rate}}}$
+
+The *asymptote* is determined by the total population susceptible to infection and the *inflection day* only shifts the model backwards or forwards in time. That is why the *normalized infection rate* will be used as the parameter to compare the infection rates of different countries, independent of their total population.
+
+### Preparing data
+
+```{r prepareModeling}
+transformed_cases <- left_join(date_first_country, cases %>% select(Country.Region, date, number), by = "Country.Region") %>% filter(number > 0) %>% mutate(days_since_first = interval(date_first,date) %/% days(1) + 1) %>% select(c("Country.Region", "days_since_first_global", "days_since_first", "number"))
+```
+
+The logistic model will fit to the number of cases as it relates to the number of days elapsed since the first recorded case in the country.
+
+### Example of logistic growth model: Colombia
+
+This is a test of the fit of the logistic growth model using the spread of the virus in Colombia as an example.
+
+```{r logiModelExample}
+cases_Colombia <- transformed_cases %>% filter(Country.Region == "Colombia")
+
+model_Colombia = nls(number ~ SSlogis(days_since_first, a, b, c), data = cases_Colombia)
+
+plot(cases_Colombia$days_since_first, cases_Colombia$number, ylab = "Number of Cases", xlab = "Days Since First", col = "blue")
+lines(cases_Colombia$days_since_first, predict(model_Colombia), col = "red")
+
+cat("Model parameters:\nAsymptote: ",summary(model_Colombia)$parameters[1],"\nDay of inflection: ",summary(model_Colombia)$parameters[2],"\nNormalized infection rate:",summary(model_Colombia)$parameters[3])
+```
+The recorded data was plotted in blue and the model predictions in red. This test reinforces the choice of logistic growth as a good, although simple, model for the spread of the COVID-19 virus.
+
+### Modeling every country
+```{r logiModelCountries}
+logi_model <- function(x, y) {
+  tryCatch({
+    return(summary(nls(y ~ SSlogis(x, a, b, c)))$parameters[3])
+  }, error = function(e) {
+    return(NA)
+  })
+}
+
+logi_model_by_country <- transformed_cases %>% group_by(Country.Region, days_since_first_global) %>% summarize(logi_model_scal = logi_model(days_since_first, number), .groups = "drop")
+
+kable(logi_model_by_country %>% slice_max(order_by = logi_model_scal, n = 5) %>% select(Country.Region, logi_model_scal, days_since_first_global), col.names = c("Country", "Normalized infection rate", "Days since first case"))
+
+kable(logi_model_by_country %>% slice_min(order_by = logi_model_scal, n = 5) %>% select(Country.Region, logi_model_scal, days_since_first_global), col.names = c("Country", "Normalized infection rate", "Days since first case"))
+
+total_countries <- nrow(logi_model_by_country)
+
+successfull_models <- logi_model_by_country %>% drop_na()
+
+cat("Logistic growth model fit successfully for ", nrow(successfull_models)*100/total_countries,"% of countries\n")
+
+cat("Model failed for ",paste0((logi_model_by_country %>% filter(if_any(everything(), is.na)))$Country.Region, sep = ";"))
+```
+
+The logistic model is fit to every country and the normalized infection rate is recorded. The tables show the top 5 and last 5 countries ranked by infection rate. The top 5 countries detected their first cases relatively soon after the first global case, while the last 5 where within the last to detect COVID-19. This initial analysis seems to support that countries that delayed the arrival of COVID-19 had lower infection rates, but further analysis of the whole dataset is required.
+
+A few countries could not be modeled using logistic growth. These countries are outliers in their behavior, likely due to special circumstances (e.g. Antartica and North Korea). They are removed for the global analysis of infection rates, as they don't reflect the global trend.
+
+## Analyzing the relationship between delayed arrival of COVID-19 and infection rates
+
+```{r arrivalSpreadGraph}
+plot(successfull_models$days_since_first_global, successfull_models$logi_model_scal, ylab = "Normalized Infection Rate", xlab = "Days Since First Global Case")
+```
+
+In the plot there is only a noticeable difference between territories that detected the virus before or after 200 days. A new plot showing only countries that detected the virus before 200 days is necessary to visualize general patterns.
+
+```{r arrivalSpreadGraphLess200Days}
+countries_less_200 <- successfull_models %>% filter(days_since_first_global < 200)
+plot(countries_less_200$days_since_first_global, countries_less_200$logi_model_scal, ylab = "Normalized Infection Rate", xlab = "Days Since First Global Case")
+```
+
+Even then, there are no visible patterns. A linear model could help uncover a subtle relationship. But first, the outliers that took more than 200 days to detect the virus must be analized. They seem to behave much different to other countries.
+
+```{r}
+kable(successfull_models %>% filter(days_since_first_global > 200), col.names = c("Country", "Normalized infection rate", "Days since first case"))
+```
+
+They are all small island nations. We can conclude that some small island nations successfully delayed the arrival of COVID-19 by much longer than most other countries. They also achieved a lower transmission rate than most other countries. But the analysis so far is not enough to conclude that the time they delayed the arrival of the virus had an effect on the transmission rate. Other factors specific to these nations could have influenced the transmission rate, like their culture or population density.
+
+Because these nations are unlike most other nations, they will not be taken in to account when modeling the global relationship between the time it took COVID-19 to arrive and the transmission rate.
+
+```{r}
+linear_model <- lm(countries_less_200$logi_model_scal ~ countries_less_200$days_since_first_global)
+
+plot(countries_less_200$days_since_first_global, countries_less_200$logi_model_scal, ylab = "Normalized Infection Rate", xlab = "Days Since First Global Case")
+
+lines(countries_less_200$days_since_first_global, predict(linear_model))
+
+cat("Model has a slope of ", summary(linear_model)$coefficients[2], " and an R2 value of ", summary(linear_model)$adj.r.squared[1])
+```
+Both the small slope and the R2 value of essentially 0 indicate that there is no linear relationship between the time it took COVID-19 to be detected in a country and the rate of transmission.
+
+There is quite a spread in the transmission rates. This means there could be other factors that do correlate with the transmission rate in a country, but there is no discernible correlation between the time it took COVID-19 to be detected and the normalized transmission rate in country.
+
+## Bias identification
+
+When analyzing the effect of delaying the arrival of COVID-19 in a country I was hoping to find a noticeable correlation with the transmission rate. I was biased because the policies protecting people from the virus where quite strict in my country, and the isolation proved to be quite a challenge. I was hopping to prove that the sacrifices had been worth it and effective in delaying the spread of the virus.
+
+The bias was dealt with performing the analysis with an open mind. I also relied on mathematical models to subjectively measure the transmission rate in a way different countries could be compared with one another. In the end, my bias did not prevent me from arriving at a conclusion that contradicts my intuition.
+
+## Conclusions
+
+Many countries likely managed to delay the arrival of COVID-19 in their territories for up to 8 weeks, but no correlation was found between the time it took COVID-19 to be detected in a country and the infection rate.
+
+There was a large variation in the normalized infection rates, ranging from a minimum of about 3 to a maximum of around 300. This means there are probably other factors that did influence the infection rate in a country, but delaying the arrival of COVID-19 was not one of them.
+
+This analysis is limited to the rate of infection, and thus does not conclude the national isolation policies instated by some countries where totally ineffective. Further analysis is required to determine its effectiveness in other important metrics like the rate of cases with serious symptoms or death, as well as the total population susceptible to infection that should decrease over time due to vaccination.

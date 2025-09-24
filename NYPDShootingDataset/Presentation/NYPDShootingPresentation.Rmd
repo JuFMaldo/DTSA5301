@@ -1,0 +1,91 @@
+---
+title: "NYPD Shooting Incident Data Analysis"
+author: "Juan Felipe Maldonado"
+date: "`r Sys.Date()`"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r loadLibraries, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(knitr)
+library(ggplot2)
+```
+
+```{r importData, include=FALSE}
+shooting_data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv") %>% select(c("INCIDENT_KEY","OCCUR_DATE","OCCUR_TIME")) %>% mutate(INCIDENT_KEY = as_factor(INCIDENT_KEY)) %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>% mutate(OCCUR_TIME = as_hms(OCCUR_TIME))
+```
+
+```{r fftModel, include=FALSE}
+victims_time <- shooting_data %>% count(OCCUR_DATE)
+# Ensure there is a row for every day
+victims_all_days <- left_join(tibble(OCCUR_DATE = seq(from = min(shooting_data$OCCUR_DATE), to = max(shooting_data$OCCUR_DATE), by = "day")), victims_time, by="OCCUR_DATE") %>% replace(is.na(.), 0)
+# Remove last sample if number of samples is even to only deal with odd FFT
+samples <- nrow(victims_all_days)
+if (samples %% 2 == 0) {victims_all_days <- victims_all_days %>% filter(row_number() < n())}
+samples <- nrow(victims_all_days)
+# Determine number of samples to filter lowest frequencies with a minimum period of a month
+keep_n_frecuencies <- ceiling(samples/30.436875)
+# Compute FFT
+ftt_result <- tibble(fft(victims_all_days$n))
+colnames(ftt_result) <- c("fft_res")
+# Filter lowest frequencies with a minimum period of a month
+filtered_fft <- ftt_result %>% mutate(fft_res = if_else(between(row_number(),keep_n_frecuencies + 2, samples - keep_n_frecuencies), 0, fft_res))
+# Add prediction
+victims_all_days <- victims_all_days %>% mutate(prediction = Re(fft(filtered_fft %>% getElement("fft_res"), inverse = TRUE))/samples)
+colnames(victims_all_days) <- c("date","recorded_victims","predicted_victims")
+```
+
+## Data source
+
+*NYPD Shooting Incident Data (2026-2024)* sourced from DATA.GOV
+
+**Field categories:** time, location, race, gender, age and outcome
+
+Some fields have many unknowns and invalid categorical data
+
+**Practical applications:** first responders, policy makers
+
+## Number of victims over time
+
+```{r victimsTimePlot}
+victims_time %>% ggplot(aes(x = .[[1]], y = .[[2]])) + geom_line() + ylab("Victims") + xlab("Year")
+```
+
+## Sum of periodic sinusoids model
+
+```{r victimsPredictionTimePlot}
+victims_all_days %>% ggplot() + geom_line(aes(x = date, y = recorded_victims, color = "Recorded")) + geom_line(aes(x = date, y = predicted_victims, color = "Predicted")) + xlab("Year") + ylab("Victims") + labs(color = "")
+```
+
+## Model spectrum
+
+```{r modelSpectrumPlot}
+plot_data_filtered_fft <- filtered_fft %>% slice_head(n = keep_n_frecuencies + 1) %>% filter(row_number() > 1) %>% mutate(period_months = samples/(row_number()*30.436875)) %>% mutate(mag = Mod(fft_res)/samples)
+
+plot_data_filtered_fft %>% ggplot(aes(x = period_months, y = mag)) + geom_line() + xlab("Signal period (Months)") + ylab("Magnitude") + ggtitle("Graphical representation of the model's periodic components")
+```
+
+## Average number of victims per month
+
+```{r victimsByMonthPlot}
+mon <- interval(min(shooting_data$OCCUR_DATE),max(shooting_data$OCCUR_DATE)) %/% months(1) 
+victims_mon <- shooting_data %>% count(month(OCCUR_DATE),name = "Victims") %>% mutate(Victims = Victims/mon)
+colnames(victims_mon) <- c("Month of the year","Average number of victims")
+victims_mon %>% ggplot(aes(x = .[[1]], y = .[[2]])) + geom_bar(stat = "identity") + scale_x_discrete(name ="Month of the year", limits=1:12) + ylab("Average number of victims")
+```
+
+## Conclusions
+
+Significant periodic behavior every 12 months
+
+**Minimum victims:** February
+
+**Maximum victims:** July
+
+Full analysis at **github.com/JuFMaldo/DTSA5301**
