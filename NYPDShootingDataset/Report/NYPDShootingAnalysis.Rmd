@@ -1,0 +1,241 @@
+---
+title: "NYPD Shooting Incident Data (Historic) Analysis"
+author: "Juan Felipe Maldonado"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+## Introduction
+
+This report explores and analyses the *NYPD Shooting Incident Data (Historic)* dataset sourced from DATA.GOV. The dataset includes information about the time, location, race, gender, age and outcome of shooting incidents in New York.
+
+The focus of this report will lay on analyzing the number of shooting incident victims per incident and patterns in victims over time. The report will answer:
+
+* How many victims are there per shooting incident?
+* What patterns are there on the number of victims over time?
+
+Troughout the report there are also followup questions to promote further analysis of this rich dataset.
+
+## Loading Tidyverse library
+
+```{r loadLibraries}
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(knitr)
+library(ggplot2)
+```
+
+## Importing and showing a sample of NYPD shooting incident data
+
+```{r importData}
+shooting_data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv")
+head(shooting_data)
+```
+
+The sample is analyzed using the data dictionary in: <https://data.cityofnewyork.us/api/views/833y-fsy8/files/e4e3d86c-348f-4a16-a17f-19480c089429?download=true&filename=NYPD_Shootings_Incident_Level_Data_Footnotes.pdf>
+
+Information in (X_COORD_CD,Y_COORD_CD),(Latitude,Longitude) and Lon_Lat is redundant.
+
+INCIDENT_KEY is not distinct. Incidents with multiple victims can have multiple entries.
+
+## Data summary
+
+```{r dataSummary}
+summary(shooting_data)
+```
+
+Data types need to be adjusted.
+
+## Exploring categorical data
+
+```{r categoryExplore}
+shooting_data %>% count(BORO) %>% arrange(n)
+shooting_data %>% count(LOC_OF_OCCUR_DESC) %>% arrange(n)
+shooting_data %>% count(PRECINCT) %>% arrange(n)
+shooting_data %>% count(JURISDICTION_CODE) %>% arrange(n)
+shooting_data %>% count(LOC_CLASSFCTN_DESC) %>% arrange(n)
+shooting_data %>% count(LOCATION_DESC) %>% arrange(n)
+shooting_data %>% count(STATISTICAL_MURDER_FLAG) %>% arrange(n)
+shooting_data %>% count(PERP_AGE_GROUP) %>% arrange(n)
+shooting_data %>% count(PERP_SEX) %>% arrange(n)
+shooting_data %>% count(PERP_RACE) %>% arrange(n)
+shooting_data %>% count(VIC_AGE_GROUP) %>% arrange(n)
+shooting_data %>% count(VIC_SEX) %>% arrange(n)
+shooting_data %>% count(VIC_RACE) %>% arrange(n)
+```
+Grouping the variables by percentage of entries with unknown value:
+
+* No unknown: BORO, PRECINCT, STATISTICAL_MURDER_FLAG
+* Less than 50 % unknown: JURISDICTION_CODE, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE
+* 50% or more unknown: LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, LOCATION_DESC
+
+
+LOCATION_DESC has many distinct values and unknowns
+
+PERP_AGE_GROUP, PERP_SEX, PERP_RACE use multiple categories for unknown
+
+PERP_AGE_GROUP and VIC_AGE_GROUP include values outside allowed categories
+
+## Dropping columns of little value to analysis
+
+```{r dropColumns}
+shooting_data <- shooting_data %>% select(-c(LOCATION_DESC, X_COORD_CD, Y_COORD_CD, Lon_Lat))
+```
+
+
+## Setting all values outside of allowed categories to UNKNOWN (including missing values)
+
+```{r tidyCategories}
+shooting_data <- shooting_data %>% mutate(LOC_OF_OCCUR_DESC = if_else(LOC_OF_OCCUR_DESC %in% c("INSIDE", "OUTSIDE"), LOC_OF_OCCUR_DESC, "UNKNOWN")) %>% mutate(JURISDICTION_CODE = if_else(JURISDICTION_CODE %in% c(0, 1, 2, 3), as.character(JURISDICTION_CODE), "UNKNOWN")) %>% mutate(LOC_CLASSFCTN_DESC = if_else(LOC_CLASSFCTN_DESC %in% c("PARKING LOT", "VEHICLE", "TRANSIT", "PLAYGROUND", "OTHER", "COMMERCIAL", "DWELLING", "HOUSING", "STREET"), LOC_CLASSFCTN_DESC, "UNKNOWN")) %>% mutate(PERP_AGE_GROUP = if_else(PERP_AGE_GROUP %in% c("<18", "18-24", "25-44", "45-64", "65+"), PERP_AGE_GROUP, "UNKNOWN")) %>% mutate(PERP_SEX = if_else(PERP_SEX %in% c("F", "M"), PERP_SEX, "UNKNOWN")) %>% mutate(PERP_RACE = if_else(PERP_RACE %in% c("AMERICAN INDIAN/ALASKAN NATIVE", "ASIAN / PACIFIC ISLANDER", "WHITE", "BLACK HISPANIC","WHITE HISPANIC","BLACK"), PERP_RACE, "UNKNOWN")) %>% mutate(VIC_AGE_GROUP = if_else(VIC_AGE_GROUP %in% c("<18", "18-24", "25-44", "45-64", "65+"), VIC_AGE_GROUP, "UNKNOWN"))
+```
+
+## Setting correct data types
+
+```{r setDataType}
+shooting_data <- shooting_data %>% mutate(INCIDENT_KEY = as_factor(INCIDENT_KEY)) %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>% mutate(OCCUR_TIME = as_hms(OCCUR_TIME)) %>% mutate(BORO = as_factor(BORO)) %>% mutate(LOC_OF_OCCUR_DESC = as_factor(LOC_OF_OCCUR_DESC)) %>% mutate(PRECINCT = as_factor(PRECINCT)) %>% mutate(JURISDICTION_CODE = as_factor(JURISDICTION_CODE)) %>% mutate(LOC_CLASSFCTN_DESC = as_factor(LOC_CLASSFCTN_DESC)) %>% mutate(STATISTICAL_MURDER_FLAG = (STATISTICAL_MURDER_FLAG == "true")) %>% mutate(PERP_AGE_GROUP = as_factor(PERP_AGE_GROUP)) %>% mutate(PERP_SEX = as_factor(PERP_SEX)) %>% mutate(PERP_RACE = as_factor(PERP_RACE)) %>% mutate(VIC_AGE_GROUP = as_factor(VIC_AGE_GROUP)) %>% mutate(VIC_SEX = as_factor(VIC_SEX)) %>% mutate(VIC_RACE = as_factor(VIC_RACE))
+```
+
+## Summary of tidied data
+
+```{r tidyDataSummary}
+summary(shooting_data)
+```
+UNKOWN values will be handled by dropping rows or columns depending on the analysis to be performed.
+
+## Analyzing number of victims per incident
+
+```{r victimsPerIncident}
+victims_per_incident <- shooting_data %>% count(INCIDENT_KEY,name = "Victims") %>% count(Victims,name = "Incidents")
+total_incidents <- sum(victims_per_incident$Incidents)
+victims_per_incident <- victims_per_incident %>% mutate(Percentage = (Incidents*100)/total_incidents)
+kable(victims_per_incident)
+```
+
+The table shows most incidents recorded involve only one victim, and more than 90% percent of all incidents involve two or less victims.
+
+Additional questions for further analysis:
+
+*  Why are there so many incidents involving exactly 6, 8 or 12 victims, compared to other incidents with 5 or more victims?
+
+# Analyzing number of victims over time
+
+```{r victimsTimePlot}
+victims_time <- shooting_data %>% count(OCCUR_DATE)
+victims_time %>% ggplot(aes(x = .[[1]], y = .[[2]])) + geom_line() + ggtitle("Number of victims over time") + ylab("Victims") + xlab("Year")
+```
+
+A day after 2020 stands out for having many more incidents than any other day. What day was it? How many victims at that date?
+
+```{r dayMostVictims}
+day_most_victims <- victims_time %>% slice_max(order_by = n)
+cat("Day with most victims was", format(day_most_victims %>% getElement("OCCUR_DATE"), "%Y-%m-%d"), "with", day_most_victims %>% getElement("n"), "victims.")
+```
+Additional questions for further analysis:
+
+* Why where there so many victims July 5th, 2020?
+* How many incidents where involved?
+
+Lead: <https://www.cbsnews.com/newyork/news/new-york-city-shootings-sunday-nypd/>
+
+# Modeling number of victims over time
+
+The graph of victims over time shows a vaguely periodic behavior. By modeling the victims over time as a sum of periodic sinusoids it's possible to gain insights in to its periodic behavior. The model is constructed using the discrete Fourier transform of the data. Frequencies with a period shorter than a month are filtered out to simplify the model and filter out noise.
+
+```{r fftModel}
+# Ensure there is a row for every day
+victims_all_days <- left_join(tibble(OCCUR_DATE = seq(from = min(shooting_data$OCCUR_DATE), to = max(shooting_data$OCCUR_DATE), by = "day")), victims_time, by="OCCUR_DATE") %>% replace(is.na(.), 0)
+# Remove last sample if number of samples is even to only deal with odd FFT
+samples <- nrow(victims_all_days)
+if (samples %% 2 == 0) {victims_all_days <- victims_all_days %>% filter(row_number() < n())}
+samples <- nrow(victims_all_days)
+# Determine number of samples to filter lowest frequencies with a minimum period of a month
+keep_n_frecuencies <- ceiling(samples/30.436875)
+# Compute FFT
+ftt_result <- tibble(fft(victims_all_days$n))
+colnames(ftt_result) <- c("fft_res")
+# Filter lowest frequencies with a minimum period of a month
+filtered_fft <- ftt_result %>% mutate(fft_res = if_else(between(row_number(),keep_n_frecuencies + 2, samples - keep_n_frecuencies), 0, fft_res))
+
+plot_data_filtered_fft <- filtered_fft %>% slice_head(n = keep_n_frecuencies + 1) %>% filter(row_number() > 1) %>% mutate(period_months = samples/(row_number()*30.436875)) %>% mutate(mag = Mod(fft_res)/samples)
+
+plot_data_filtered_fft %>% ggplot(aes(x = period_months, y = mag)) + geom_line() + xlab("Signal period (Months)") + ylab("Magnitude") + ggtitle("Graphical representation of the model's periodic components")
+
+peak_signal_period <- plot_data_filtered_fft %>% slice_max(order_by = mag) %>% getElement("period_months")
+cat("Peak signal with period of ", peak_signal_period, "months")
+
+victims_all_days <- victims_all_days %>% mutate(prediction = Re(fft(filtered_fft %>% getElement("fft_res"), inverse = TRUE))/samples)
+colnames(victims_all_days) <- c("date","recorded_victims","predicted_victims")
+victims_all_days %>% ggplot() + geom_line(aes(x = date, y = recorded_victims, color = "Recorded")) + geom_line(aes(x = date, y = predicted_victims, color = "Predicted")) + xlab("Year") + ylab("Victims") + labs(color = "") + ggtitle("Number of victims over time")
+```
+
+As shown by the graph comparing the recorded data to the model prediction, the model does a good job of conveying the periodic nature of the data. It does not do a good job of predicting the day to day number of victims as all periodic trends with a period of less than a month have been filtered out.
+
+It is relevant that, as of September 2025, the model has a peak frequency component at 12 months. This yearly periodic behavior is further explored by analyzing the average number of victims per month of the year.
+
+# Analyzing average number of victims by month of the year
+
+```{r victimsByMonth}
+mon <- interval(min(shooting_data$OCCUR_DATE),max(shooting_data$OCCUR_DATE)) %/% months(1) 
+victims_mon <- shooting_data %>% count(month(OCCUR_DATE),name = "Victims") %>% mutate(Victims = Victims/mon)
+colnames(victims_mon) <- c("Month of the year","Average number of victims")
+kable(victims_mon)
+victims_mon %>% ggplot(aes(x = .[[1]], y = .[[2]])) + geom_bar(stat = "identity") + ggtitle("Average number of victims per month of the year") + scale_x_discrete(name ="Month of the year", limits=1:12) + ylab("Average number of victims")
+```
+
+A roughly sinusoidal behavior is observed on the number of victims per month every year as predicted by the model. This periodic trend peaks in July and achieves its minimum in February.
+
+Additional questions for further analysis:
+
+* Is there a reason behind this periodic trend?
+* Can other periodic trends be uncovered at high magnitude frequency signals of the model?
+
+# Analyzing average number of victims by time of day
+
+Because the model aggregated the data by day and filtered out trends with a period of less than a month, it could not uncover trends on the number of victims according to the time of day. To understand the hours of least and most victims on average the data is aggregated by hour of the day and graphed.
+
+```{r victimsByHour}
+# Obtains the total number of days spanned by the data
+d <- as.integer(max(shooting_data$OCCUR_DATE)-min(shooting_data$OCCUR_DATE))
+victims_hour <- shooting_data %>% count(hour(OCCUR_TIME),name = "Victims") %>% mutate(Victims = Victims/d)
+colnames(victims_hour) <- c("Hour of the day","Average number of victims")
+kable(victims_hour)
+victims_hour %>% ggplot(aes(x = .[[1]], y = .[[2]])) + geom_bar(stat = "identity") + ggtitle("Average number of victims by hour of day") + xlab("Hour of day") + ylab("Average number of victims")
+```
+
+On average, there are the least victims during the 7 am and 9 am hour. The most victims on average occur during the 11 pm and midnight hour. It seems like the least victims occur when most people are getting ready and commuting to work.
+
+Additional questions for further analysis:
+
+* Why are there the least victims on average from 7 am to 10 am? Is it related to the fact people are getting ready and commuting to work?
+* Why are there the most victims on average around midnight?
+* The average number of victims seems to increase with the number of hours a person working a 9 to 5 job has been awake. Does tiredness increase the chance of a shooting incident?
+
+# Analyze incident location
+
+Location data is unrelated to the analysis so far, but it is plotted to encourage further analysis and show there is lots of analysis that can still be done with the remaining tidied variables.
+
+```{r locationPlot}
+shooting_data %>% ggplot(aes(x = Longitude, y = Latitude)) + geom_point()
+```
+
+Questions for further analysis:
+
+* Is there a trend on how the incident locations are grouped?
+* How do incident locations relate to other variables like time of the incident, age, race or gender?
+
+# Bias Identification
+
+This report dealt mainly with patterns over time. I am biased to believe patterns will repeat in periods of time I am familiar with like years, months, days or hours. This could be true regarding shooting incidents, as human behavior is probably influenced by those periods of time. But there could be other relevant factors in shooting incidents that are not influenced by human defined time periods. This bias was mitigated by using a mathematical model, and not only intuition, to uncover a strong yearly trend in the average number of victims per month.
+
+I am also biased to believe most crime happens at night because, where I live, leaving home late at night is perceived as dangerous. The results of analyzing the average number of victims by time of day supports my bias. Considering the data was only averaged by hour of the day, there is little chance for me to introduce my bias in the analysis. Still, it could be further mitigated by having my work peer reviewed and performing additional analysis, but this is beyond the scope of this report.
+
+# Conclusion
+
+There is a lot of analysis potential in the NYPD Shooting Incident Data (Historic) database. The analysis in this report concludes that most shooting incidents in New York have only one victim. It was also noticed that the number of victims tends to vary periodically on a yearly basis, with the most victims in July and the least in February. Analysis of the average number of victims by time of day shows there are the least victims on average from 7 am to 10 am and the most around midnight. Finally, followup questions where formulated to encourage further analysis of the data beyond the scope of this report.
+
